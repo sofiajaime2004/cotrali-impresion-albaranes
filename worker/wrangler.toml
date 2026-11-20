@@ -1,0 +1,7 @@
+name = "cotrali-ocr"
+main = "worker.js"
+compatibility_date = "2026-11-01"
+
+[vars]
+# Dirección de la página en GitHub Pages (sin barra final). Se puede poner más de una separada por comas.
+ALLOWED_ORIGIN = "https://TU-USUARIO.github.io"

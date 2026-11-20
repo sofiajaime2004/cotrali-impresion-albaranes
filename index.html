@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cotrali · Códigos de barras en albaranes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+html,body{margin:0}
+body{font-family:"Myriad Pro","Source Sans 3",system-ui,sans-serif;color:#14202b;background:#f3f6f9;line-height:1.45;min-height:100vh;display:flex;flex-direction:column}
+button,select,input{font-family:inherit;font-size:16px}
+button{cursor:pointer}
+.btn{min-height:44px;padding:0 22px;border-radius:6px;font-weight:600;border:2px solid #0069a6;display:inline-flex;align-items:center;justify-content:center;gap:8px}
+.btn-primary{background:#0069a6;color:#fff}
+.btn-primary:hover{background:#00588b;border-color:#00588b}
+.btn-secondary{background:#fff;color:#0069a6}
+.btn-secondary:hover{background:#e8f1f8}
+.btn:disabled{background:#e6ebf0;border-color:#e6ebf0;color:#566370;cursor:not-allowed}
+:focus-visible{outline:3px solid #14202b;outline-offset:2px}
+.drop{width:100%;min-height:150px;border:2px dashed #7f93a5;border-radius:8px;background:#f8fafc;color:#14202b;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:20px;text-align:center}
+.drop:hover,.drop.over{border-color:#0069a6;background:#e8f1f8}
+.seg{min-height:44px;padding:0 16px;border:2px solid #0069a6;background:#fff;color:#0069a6;font-weight:600}
+.seg[aria-pressed="true"]{background:#0069a6;color:#fff}
+.link-btn{min-height:44px;border:0;background:none;color:#0069a6;font-weight:600;text-decoration:underline;padding:0 8px}
+.rowbtn{min-height:44px;border:0;background:none;text-align:left;font-weight:600;color:#14202b;padding:0 4px;text-decoration:underline;text-decoration-color:#b6c4d1;text-underline-offset:3px}
+.rowbtn:hover{color:#0069a6}
+td,th{padding:6px 14px;text-align:left;border-bottom:1px solid #e3e9ef}
+th{font-size:14px;color:#3b4957;font-weight:600;background:#f8fafc}
+table{border-collapse:collapse;width:100%}
+.card{background:#fff;border:1px solid #d5dde5;border-radius:10px}
+.sr{position:absolute;left:-9999px}
+select{min-height:44px;border:2px solid #7f93a5;border-radius:6px;padding:0 10px;background:#fff;color:#14202b;max-width:100%}
+label.chk{display:inline-flex;align-items:center;gap:10px;min-height:44px}
+input[type=checkbox]{width:22px;height:22px}
+.err{border:2px solid #e20019;border-radius:8px;padding:16px;background:#fff7f7}
+.ok-t{color:#14532d}.bad-t{color:#9b0014}
+.pill{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:999px;font-weight:600}
+.overlay{position:fixed;inset:0;background:rgba(20,32,43,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px}
+.overlay>div{background:#fff;border-radius:10px;padding:28px 32px;max-width:420px;width:100%;text-align:center}
+.bar{height:10px;background:#e3e9ef;border-radius:999px;overflow:hidden;margin-top:14px}
+.bar>i{display:block;height:100%;background:#0069a6;transition:width .15s}
+@media (max-width:640px){.hide-sm{display:none}}
+</style>
+<script src="config.js" onerror="void 0"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+</head>
+<body>
+<div id="app"></div>
+<input id="fpick" type="file" multiple accept=".pdf,.xlsx,.xlsm,.xls,.csv,application/pdf" class="sr" tabindex="-1" aria-hidden="true">
+<script>
+(function () {
+'use strict';
+
+/* ---------- utilidades ---------- */
+var $ = function (s, r) { return (r || document).querySelector(s); };
+var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+var plural = function (n, one, many) { return n + ' ' + (n === 1 ? one : many); };
+var fmtSize = function (b) { return b < 1048576 ? Math.max(1, Math.round(b / 1024)) + ' KB' : (b / 1048576).toFixed(1).replace('.', ',') + ' MB'; };
+var normKey = function (s) { return String(s == null ? '' : s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, ''); };
+var sleep0 = function () { return new Promise(function (r) { setTimeout(r, 0); }); };
+
+var ICON = {
+  check: '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+  warn: '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17.2v.1"/></svg>',
+  up: '<svg aria-hidden="true" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#0069a6" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>',
+  pdf: '<svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#566370" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>',
+  xls: '<svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#566370" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 10h16M4 15h16M10 4v16"/></svg>',
+  dl: '<svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12M7 11l5 5 5-5M4 20h16"/></svg>'
+};
+
+/* ---------- Code 128 ---------- */
+var PAT = "212222,222122,222221,121223,121322,131222,122213,122312,132212,221213,221312,231212,112232,122132,122231,113222,123122,123221,223211,221132,221231,213212,223112,312131,311222,321122,321221,312212,322112,322211,212123,212321,232121,111323,131123,131321,112313,132113,132311,211313,231113,231311,112133,112331,132131,113123,113321,133121,313121,211331,231131,213113,213311,213131,311123,311321,331121,312113,312311,332111,314111,221411,431111,111224,111422,121124,121421,141122,141221,112214,112412,122114,122411,142112,142211,241211,221114,413111,241112,134111,111242,121142,121241,114212,124112,124211,411212,421112,421211,212141,214121,412121,111143,111341,131141,114113,114311,411113,411311,113141,114131,311141,411131,211412,211214,211232".split(',');
+
+function code128Valid(t) { return !!t && /^[\x20-\x7e]+$/.test(t); }
+function code128(text) {
+  var useC = /^\d{4,}$/.test(text) && text.length % 2 === 0;
+  var v = [], i;
+  if (useC) { v.push(105); for (i = 0; i < text.length; i += 2) v.push(parseInt(text.substr(i, 2), 10)); }
+  else { v.push(104); for (i = 0; i < text.length; i++) v.push(text.charCodeAt(i) - 32); }
+  var sum = v[0];
+  for (i = 1; i < v.length; i++) sum += i * v[i];
+  v.push(sum % 103);
+  return (v.map(function (x) { return PAT[x]; }).join('') + '2331112').split('').map(Number);
+}
+var FS = 8, BH = 30;
+function geom(num, pageW) {
+  var w = code128(num), total = w.reduce(function (a, b) { return a + b; }, 0);
+  var mw = Math.max(0.9, Math.min(1.4, 150 / (total + 20)));
+  if ((total + 20) * mw > pageW * 0.6) mw = Math.max(0.55, pageW * 0.6 / (total + 20));
+  var barsW = total * mw, tw = num.length * FS * 0.58;
+  var boxW = Math.max(barsW + 20 * mw, tw + 8);
+  return { w: w, mw: mw, barsW: barsW, boxW: boxW, boxH: 4 + BH + 3 + FS + 3, tw: tw };
+}
+
+/* ---------- estado ---------- */
+var S = { code: '', apiErr: '', apiFail: 0, manual: {}, entries: [], step: 1, pdfs: [], xls: null, items: [], sel: 0, page: 0, pos: 'tr', filter: 'all', busy: null, outputs: [], msg: '', err: '', drag: null };
+var downloadsCap = null;
+var inkCache = new Map();
+var pvToken = 0;
+
+/* ---------- lectura de PDF ---------- */
+async function addPdf(file) {
+  var buf = await file.arrayBuffer();
+  var doc;
+  try { doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf.slice(0)) }).promise; }
+  catch (e) { return { error: file.name + ': no se ha podido abrir (' + (e && e.name === 'PasswordException' ? 'está protegido con contraseña' : 'archivo dañado o no es un PDF') + ').' }; }
+  var pages = [], withText = 0;
+  for (var i = 1; i <= doc.numPages; i++) {
+    S.busy.text = 'Leyendo ' + file.name + ' · hoja ' + i + ' de ' + doc.numPages; S.busy.p = i / doc.numPages; renderBusy();
+    var pg = await doc.getPage(i);
+    var tc = await pg.getTextContent();
+    var text = tc.items.map(function (it) { return it.str; }).join(' ').replace(/\s+/g, ' ').trim();
+    if (text.length > 15) withText++;
+    pages.push({ text: text });
+    if (i % 5 === 0) await sleep0();
+  }
+  return { pdf: { name: file.name, size: file.size, bytes: buf, doc: doc, numPages: doc.numPages, pages: pages, scanned: withText === 0 } };
+}
+
+/* ---------- lectura de Excel ---------- */
+function colName(i) { var s = ''; i++; while (i > 0) { var m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; }
+async function readExcel(file) {
+  var buf = await file.arrayBuffer();
+  var wb;
+  try { wb = XLSX.read(buf, { type: 'array' }); } catch (e) { return { error: file.name + ': no se ha podido leer el Excel.' }; }
+  var name = wb.SheetNames.indexOf('Hoja1') >= 0 ? 'Hoja1' : wb.SheetNames[0];
+  var ws = wb.Sheets[name];
+  if (!ws) return { error: file.name + ': el Excel no tiene hojas.' };
+  var rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '', blankrows: false }).map(function (r) { return r.map(function (c) { return String(c == null ? '' : c).trim(); }); });
+  var ncols = rows.reduce(function (m, r) { return Math.max(m, r.length); }, 0);
+  if (rows.length < 1 || ncols < 2) return { error: file.name + ': necesito al menos dos columnas (referencia y Nº de albarán de Cotrali).' };
+  var re = /ref|alb|n[uú]m|n[º°o]\b|c[oó]d|cliente|fecha|pedido/i;
+  var header = rows[0].some(function (c) { return re.test(c); });
+  var x = { name: file.name, size: file.size, sheet: name, rows: rows, ncols: ncols, header: header, colRef: 0, colNum: 1 };
+  guessCols(x);
+  return { xls: x };
+}
+function guessCols(x) {
+  var h = x.header ? x.rows[0] : [];
+  var r = -1, n = -1, i;
+  for (i = 0; i < x.ncols; i++) if (/ref/i.test(h[i] || '') && r < 0) r = i;
+  for (i = 0; i < x.ncols; i++) if (i !== r && /(alb|n[uú]m|n[º°o]\b|cotrali|nuestr|intern)/i.test(h[i] || '') && n < 0) n = i;
+  if (r < 0) r = (n === 0) ? 1 : 0;
+  if (n < 0) n = (r === 0) ? 1 : 0;
+  x.colRef = r; x.colNum = n;
+  x.colDesc = -1;
+  for (i = 0; i < x.ncols; i++) if (/consignatario|destinatari/i.test(h[i] || '') && x.colDesc < 0) x.colDesc = i;
+}
+
+/* ---------- servicio de lectura (OCR por API) ---------- */
+function apiUrl() { return (window.COTRALI_CONFIG && window.COTRALI_CONFIG.apiUrl) || ''; }
+async function apiOcr(pdf, pageNo) {
+  var page = await pdf.doc.getPage(pageNo), b = page.getViewport({ scale: 1 });
+  var vp = page.getViewport({ scale: 1800 / Math.max(b.width, b.height) });
+  var cv = document.createElement('canvas'); cv.width = Math.ceil(vp.width); cv.height = Math.ceil(vp.height);
+  var cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height);
+  await page.render({ canvasContext: cx, viewport: vp }).promise;
+  var data = cv.toDataURL('image/jpeg', 0.85).split(',')[1];
+  for (var attempt = 0; attempt < 2; attempt++) {
+    try {
+      var r = await fetch(apiUrl(), { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Access-Code': S.code }, body: JSON.stringify({ image: data }) });
+      if (r.status === 401 || r.status === 403) throw { fatal: 'El código de acceso no es correcto o esta página no está autorizada.' };
+      if (r.status === 429) throw { fatal: 'Se ha superado el límite de uso del servicio de lectura. Espera un poco e inténtalo de nuevo.' };
+      if (!r.ok) throw { retry: true };
+      return String((await r.json()).text || '');
+    } catch (e) {
+      if (e && e.fatal) throw e;
+      if (attempt === 1) throw e;
+      await new Promise(function (res) { setTimeout(res, 700); });
+    }
+  }
+}
+async function ocrAll(onProgress) {
+  var jobs = [];
+  S.pdfs.forEach(function (pdf) { pdf.pages.forEach(function (p, i) { if (p.ocr === undefined) jobs.push({ pdf: pdf, p: p, n: i + 1 }); }); });
+  var total = jobs.length, done = 0, next = 0, fatal = null;
+  async function worker() {
+    while (!fatal) {
+      var j = jobs[next++]; if (!j) return;
+      try { j.p.ocr = await apiOcr(j.pdf, j.n); }
+      catch (e) { if (e && e.fatal) { fatal = e.fatal; return; } j.p.ocr = null; S.apiFail++; }
+      done++; await onProgress('Leyendo las hojas con el servicio de lectura', done, total);
+    }
+  }
+  S.apiFail = 0;
+  await Promise.all([worker(), worker(), worker(), worker()]);
+  if (fatal) throw new Error(fatal);
+}
+
+/* ---------- análisis: cruzar PDF y Excel ---------- */
+function lev(a, b) {
+  var m = a.length, n = b.length, p = [], i, j;
+  for (j = 0; j <= n; j++) p[j] = j;
+  for (i = 1; i <= m; i++) {
+    var prev = p[0]; p[0] = i;
+    for (j = 1; j <= n; j++) { var t = p[j]; p[j] = Math.min(p[j] + 1, p[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = t; }
+  }
+  return p[n];
+}
+function fuzzyDist(s, r) {
+  var L = r.length, maxE = L >= 9 ? 2 : 1, parts = maxE + 1, sz = Math.floor(L / parts), best = 99;
+  for (var p = 0; p < parts; p++) {
+    var a = p * sz, b = p === parts - 1 ? L : (p + 1) * sz, chunk = r.slice(a, b), from = 0, pos;
+    while ((pos = s.indexOf(chunk, from)) >= 0) {
+      from = pos + 1;
+      for (var ds = -1; ds <= 1; ds++) for (var dl = -1; dl <= 1; dl++) {
+        var s0 = pos - a + ds, len = L + dl;
+        if (s0 < 0 || s0 + len > s.length) continue;
+        var d = lev(s.substr(s0, len), r); if (d < best) best = d;
+      }
+    }
+  }
+  return best <= maxE ? best : -1;
+}
+function countOcc(s, k) { var n = 0, p = 0; while ((p = s.indexOf(k, p)) >= 0) { n++; p += k.length; } return n; }
+function normText(text) { return text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); }
+function matchExact(text, entries, shortMap) {
+  var norm = normText(text), compact = norm.replace(/[^a-z0-9]/g, '');
+  var best = null, bestN = 0, found = 0, i;
+  for (i = 0; i < entries.length; i++) {
+    var e = entries[i];
+    if (e.key.length < 6) continue;
+    var n = countOcc(compact, e.key);
+    if (n) { found++; if (!best || n > bestN || (n === bestN && e.key.length > best.key.length)) { best = e; bestN = n; } }
+  }
+  if (shortMap.size) {
+    var toks = norm.split(/[\s:;,()|\[\]]+/).filter(Boolean);
+    for (i = 0; i < toks.length; i++) {
+      var acc = '';
+      for (var k = 0; k < 4 && i + k < toks.length; k++) {
+        acc += toks[i + k].replace(/[^a-z0-9]/g, '');
+        var se = shortMap.get(acc);
+        if (se && !best) { best = se; found++; }
+      }
+    }
+  }
+  return best ? { entry: best, amb: found > 1, src: 'texto' } : null;
+}
+function matchBars(codes, entries) {
+  var best = null, found = 0;
+  codes.forEach(function (c) {
+    var cc = normKey(c);
+    entries.forEach(function (e) {
+      if (e.key.length >= 6 && cc.indexOf(e.key) >= 0) { if (!best || best.key !== e.key) found++; if (!best || e.key.length > best.key.length) best = e; }
+    });
+  });
+  return best ? { entry: best, amb: found > 1, src: 'barras' } : null;
+}
+function matchFuzzy(text, entries) {
+  var stream = normText(text).replace(/[^a-z0-9]/g, '').replace(/[a-z]/g, '#');
+  var fb = null, second = 99;
+  entries.forEach(function (e) {
+    if (!e.digits || e.digits.length < 7) return;
+    var d = fuzzyDist(stream, e.digits);
+    if (d < 0) return;
+    if (!fb || d < fb.d) { if (fb) second = Math.min(second, fb.d); fb = { e: e, d: d }; } else second = Math.min(second, d);
+  });
+  return fb && fb.d < second ? { entry: fb.e, amb: false, approx: true, src: 'aprox' } : null;
+}
+/* lectura de los códigos de barras impresos en la hoja */
+function bcReader() {
+  var h = new Map();
+  h.set(ZXing.DecodeHintType.TRY_HARDER, true);
+  h.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.CODE_128, ZXing.BarcodeFormat.CODE_39, ZXing.BarcodeFormat.CODE_93, ZXing.BarcodeFormat.ITF, ZXing.BarcodeFormat.EAN_13]);
+  var r = new ZXing.MultiFormatReader(); r.setHints(h); return r;
+}
+function decodeTiles(cv, rd, found, tiles) {
+  tiles.forEach(function (t) {
+    var c = document.createElement('canvas'); c.width = t[2]; c.height = t[3];
+    c.getContext('2d').drawImage(cv, t[0], t[1], t[2], t[3], 0, 0, t[2], t[3]);
+    try { found.push(rd.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(new ZXing.HTMLCanvasElementLuminanceSource(c)))).getText().trim()); } catch (e) { /* sin código en este trozo */ }
+  });
+}
+async function pageBarcodes(pdf, pageNo) {
+  if (!window.ZXing) return [];
+  var page = await pdf.doc.getPage(pageNo), b = page.getViewport({ scale: 1 }), rd = bcReader(), found = [];
+  var longs = [1800, 1200, 2600];
+  for (var li = 0; li < longs.length && !found.length; li++) {
+    var vp = page.getViewport({ scale: longs[li] / Math.max(b.width, b.height) });
+    var cv = document.createElement('canvas'); cv.width = Math.ceil(vp.width); cv.height = Math.ceil(vp.height);
+    var cx = cv.getContext('2d', { willReadFrequently: true }); cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height);
+    await page.render({ canvasContext: cx, viewport: vp }).promise;
+    var tw = Math.round(cv.width * 0.5), th = Math.round(cv.height * 0.34), tiles = [[0, 0, cv.width, cv.height]];
+    [0, 0.22, 0.44, 0.66].forEach(function (fy) { [0, 0.25, 0.5].forEach(function (fx) { tiles.push([Math.round(cv.width * fx), Math.round(cv.height * fy), tw, th]); }); });
+    decodeTiles(cv, rd, found, tiles);
+    await sleep0();
+  }
+  return found.filter(function (v, i, a) { return a.indexOf(v) === i; });
+}
+async function analyze(onProgress) {
+  if (apiUrl() && onProgress) await ocrAll(onProgress);
+  var x = S.xls, map = new Map(), entries = [], shortMap = new Map(), dup = 0, i;
+  var start = x.header ? 1 : 0;
+  for (i = start; i < x.rows.length; i++) {
+    var ref = x.rows[i][x.colRef] || '', num = x.rows[i][x.colNum] || '';
+    if (!ref) continue;
+    var key = normKey(ref);
+    if (key.length < 3) continue;
+    if (map.has(key)) { if (map.get(key).num !== num) dup++; continue; }
+    var dg = ref.replace(/\D/g, '');
+    var e = { key: key, ref: ref, num: num, used: false, row: i + 1, desc: x.colDesc >= 0 ? (x.rows[i][x.colDesc] || '') : '', digits: dg.length >= 7 && dg.length >= key.length * 0.7 ? dg : '' };
+    map.set(key, e); entries.push(e);
+    if (key.length < 6) shortMap.set(key, e);
+  }
+  S.entries = entries;
+  var groups = [];
+  for (var pi = 0; pi < S.pdfs.length; pi++) {
+    var pdf = S.pdfs[pi], pm = [];
+    for (var pj = 0; pj < pdf.pages.length; pj++) {
+      var p = pdf.pages[pj], ptxt = (p.ocr || '') + ' ' + p.text;
+      if (onProgress) await onProgress('Analizando ' + pdf.name, pj + 1, pdf.pages.length);
+      var m = matchExact(ptxt, entries, shortMap);
+      if (!m) {
+        if (p.bc === undefined) { try { p.bc = await pageBarcodes(pdf, pj + 1); } catch (e) { p.bc = []; } }
+        m = matchBars(p.bc, entries);
+      }
+      if (!m) m = matchFuzzy(ptxt, entries);
+      pm.push(m || { entry: null });
+    }
+    for (var j = 0; j < pm.length; j++) {
+      if (pm[j].entry) continue;
+      var a = j - 1, b = j + 1;
+      while (a >= 0 && !pm[a].entry) a--;
+      while (b < pm.length && !pm[b].entry) b++;
+      if (a >= 0 && b < pm.length && pm[a].entry === pm[b].entry) pm[j] = { entry: pm[a].entry, approx: true, src: 'vecinas' };
+    }
+    var cur = null;
+    pm.forEach(function (m, idx) {
+      var key = m.entry ? m.entry.key : 'none';
+      if (cur && cur.k === key) { cur.to = idx; cur.approx = cur.approx || m.approx; cur.amb = cur.amb || m.amb; if (m.src) cur.srcs[m.src] = 1; return; }
+      cur = { k: key, pdfIdx: pi, from: idx, to: idx, entry: m.entry, approx: !!m.approx, amb: !!m.amb, srcs: m.src ? (function (o) { o[m.src] = 1; return o; })({}) : {} };
+      groups.push(cur);
+    });
+  }
+  var out = [];
+  groups.forEach(function (g) {
+    var id = g.pdfIdx + ':' + g.from, n = g.to - g.from + 1, pdf = S.pdfs[g.pdfIdx];
+    if (S.manual && Object.prototype.hasOwnProperty.call(S.manual, id)) {
+      var mk = S.manual[id];
+      g.entry = mk ? map.get(mk) || null : null; g.approx = false; g.amb = false; g.manual = true; g.srcs = {};
+    }
+    var base = { id: id, pdfIdx: g.pdfIdx, from: g.from, to: g.to, n: n, label: pdf.name + ' · ' + (n > 1 ? 'págs. ' + (g.from + 1) + '-' + (g.to + 1) : 'pág. ' + (g.from + 1)), note: '', manual: !!g.manual, approx: g.approx, srcs: Object.keys(g.srcs || {}) };
+    if (g.entry) {
+      var en = g.entry;
+      en.used = true;
+      base.key = en.key; base.desc = en.desc;
+      if (!en.num) out.push(Object.assign(base, { kind: 'badNum', ref: en.ref, num: '', msg: 'La fila del Excel no tiene Nº de albarán de Cotrali.' }));
+      else if (!code128Valid(en.num)) out.push(Object.assign(base, { kind: 'badNum', ref: en.ref, num: en.num, msg: 'El Nº «' + en.num + '» tiene caracteres que Code 128 no admite.' }));
+      else out.push(Object.assign(base, { kind: 'ok', ref: en.ref, num: en.num, amb: g.amb }));
+    } else {
+      out.push(Object.assign(base, { kind: 'noExcel', ref: '—', num: '', hasRef: false }));
+    }
+  });
+  entries.forEach(function (e) {
+    if (!e.used) out.push({ id: 'x:' + e.key, kind: 'noPdf', pdfIdx: null, from: 0, to: 0, n: 0, label: 'Sin PDF', ref: e.ref, num: e.num || '—', desc: e.desc, note: '' });
+  });
+  S.items = out; S.dupConflicts = dup; S.excelRows = entries.length;
+}
+
+/* ---------- hueco libre en cada hoja ---------- */
+async function getInk(pdf, pageNo) {
+  var key = pdf.name + ':' + pdf.size + ':' + pageNo;
+  if (inkCache.has(key)) return inkCache.get(key);
+  var page = await pdf.doc.getPage(pageNo);
+  var vp1 = page.getViewport({ scale: 1 }), sc = 0.5, vps = page.getViewport({ scale: sc });
+  var cv = document.createElement('canvas');
+  cv.width = Math.ceil(vps.width); cv.height = Math.ceil(vps.height);
+  var ctx = cv.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+  await page.render({ canvasContext: ctx, viewport: vps }).promise;
+  var w = cv.width, h = cv.height, d = ctx.getImageData(0, 0, w, h).data;
+  var hist = new Uint32Array(256), q;
+  for (q = 0; q < d.length; q += 4) hist[(d[q] * 3 + d[q + 1] * 6 + d[q + 2]) / 10 | 0]++;
+  var acc = 0, med = 255, tot = w * h;
+  for (q = 0; q < 256; q++) { acc += hist[q]; if (acc >= tot * 0.6) { med = q; break; } }
+  var thr = Math.min(235, Math.max(150, med - 40));
+  var I = new Uint32Array((w + 1) * (h + 1));
+  for (var y = 0; y < h; y++) {
+    var row = 0;
+    for (var xx = 0; xx < w; xx++) {
+      var o = (y * w + xx) * 4;
+      if ((d[o] * 3 + d[o + 1] * 6 + d[o + 2]) / 10 < thr) row++;
+      I[(y + 1) * (w + 1) + xx + 1] = I[y * (w + 1) + xx + 1] + row;
+    }
+  }
+  var g = { W: vp1.width, H: vp1.height, w: w, h: h, sc: sc, I: I, T: vp1.transform };
+  inkCache.set(key, g);
+  return g;
+}
+function rectInk(g, x, y, bw, bh) {
+  var x0 = Math.max(0, Math.floor(x * g.sc)), y0 = Math.max(0, Math.floor(y * g.sc));
+  var x1 = Math.min(g.w, Math.ceil((x + bw) * g.sc)), y1 = Math.min(g.h, Math.ceil((y + bh) * g.sc));
+  if (x1 <= x0 || y1 <= y0) return 1;
+  var s = g.w + 1, I = g.I;
+  var n = I[y1 * s + x1] - I[y0 * s + x1] - I[y1 * s + x0] + I[y0 * s + x0];
+  return n / ((x1 - x0) * (y1 - y0));
+}
+function findSpot(g, bw, bh, pos) {
+  var M = 16, pad = 4, TOL = 0.004, W = g.W, H = g.H;
+  var C = { tr: [W - M - bw, M], tl: [M, M], br: [W - M - bw, H - M - bh], bl: [M, H - M - bh] };
+  var order = [pos].concat(['tr', 'tl', 'br', 'bl'].filter(function (k) { return k !== pos; }));
+  var k, f;
+  for (var i = 0; i < order.length; i++) {
+    k = order[i];
+    f = rectInk(g, C[k][0] - pad, C[k][1] - pad, bw + 2 * pad, bh + 2 * pad);
+    if (f <= TOL) return { x: C[k][0], y: C[k][1], ink: f, tight: false };
+  }
+  var best = null, bestInk = null, a = C[pos];
+  for (var y = M; y <= H - M - bh; y += 8) {
+    for (var x = M; x <= W - M - bw; x += 8) {
+      f = rectInk(g, x - pad, y - pad, bw + 2 * pad, bh + 2 * pad);
+      var dd = Math.hypot(x - a[0], y - a[1]);
+      if (f <= TOL && (!best || dd < best.d)) best = { x: x, y: y, d: dd, ink: f, tight: false };
+      if (!bestInk || f < bestInk.ink - 1e-9) bestInk = { x: x, y: y, ink: f, tight: true };
+    }
+  }
+  if (best) return best;
+  if (bestInk) return bestInk;
+  return { x: C[pos][0], y: C[pos][1], ink: 1, tight: true };
+}
+
+/* ---------- estampar el código en el PDF ---------- */
+function mul(m1, m2) {
+  return [m1[0] * m2[0] + m1[2] * m2[1], m1[1] * m2[0] + m1[3] * m2[1], m1[0] * m2[2] + m1[2] * m2[3], m1[1] * m2[2] + m1[3] * m2[3],
+    m1[0] * m2[4] + m1[2] * m2[5] + m1[4], m1[1] * m2[4] + m1[3] * m2[5] + m1[5]];
+}
+async function stampPdf(pdf, targets, onStep) {
+  var L = PDFLib;
+  var doc = await L.PDFDocument.load(pdf.bytes.slice(0), { ignoreEncryption: true });
+  var font = await doc.embedFont(L.StandardFonts.Helvetica);
+  var tight = 0, placed = [];
+  for (var t = 0; t < targets.length; t++) {
+    var tg = targets[t], pg = doc.getPage(tg.i);
+    var g = await getInk(pdf, tg.i + 1);
+    var geo = geom(tg.num, g.W);
+    var spot = findSpot(g, geo.boxW, geo.boxH, S.pos);
+    if (spot.tight) tight++;
+    placed.push({ i: tg.i, num: tg.num, x: spot.x, y: spot.y, w: geo.boxW, h: geo.boxH });
+    var T = g.T, det = T[0] * T[3] - T[1] * T[2];
+    var inv = [T[3] / det, -T[1] / det, -T[2] / det, T[0] / det, (T[2] * T[5] - T[3] * T[4]) / det, (T[1] * T[4] - T[0] * T[5]) / det];
+    var m = mul(inv, [1, 0, 0, -1, 0, g.H]);
+    pg.pushOperators(L.pushGraphicsState(), L.concatTransformationMatrix(m[0], m[1], m[2], m[3], m[4], m[5]));
+    var bx = spot.x, by = g.H - (spot.y + geo.boxH);
+    pg.drawRectangle({ x: bx, y: by, width: geo.boxW, height: geo.boxH, color: L.rgb(1, 1, 1) });
+    var x = bx + (geo.boxW - geo.barsW) / 2, yb = by + 3 + FS + 3;
+    for (var i = 0; i < geo.w.length; i++) {
+      var wd = geo.w[i] * geo.mw;
+      if (i % 2 === 0) pg.drawRectangle({ x: x, y: yb, width: wd, height: BH, color: L.rgb(0, 0, 0) });
+      x += wd;
+    }
+    var tw = font.widthOfTextAtSize(tg.num, FS);
+    pg.drawText(tg.num, { x: bx + (geo.boxW - tw) / 2, y: by + 3, size: FS, font: font, color: L.rgb(0, 0, 0) });
+    pg.pushOperators(L.popGraphicsState());
+    if (t % 3 === 0) { await onStep(t + 1, targets.length); }
+  }
+  return { bytes: await doc.save(), tight: tight, placed: placed };
+}
+
+/* ---------- comprobación final: se vuelve a leer cada código estampado ---------- */
+async function verifyStamped(bytes, placed, onStep) {
+  if (!window.ZXing) return null;
+  var doc = await pdfjsLib.getDocument({ data: new Uint8Array(bytes).slice() }).promise, rd = bcReader(), bad = [], K = 3;
+  for (var n = 0; n < placed.length; n++) {
+    var pl = placed[n], page = await doc.getPage(pl.i + 1);
+    var x0 = Math.max(0, pl.x - 6), y0 = Math.max(0, pl.y - 6), w = pl.w + 12, h = pl.h + 12;
+    var cv = document.createElement('canvas'); cv.width = Math.ceil(w * K); cv.height = Math.ceil(h * K);
+    var cx = cv.getContext('2d', { willReadFrequently: true }); cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height);
+    await page.render({ canvasContext: cx, viewport: page.getViewport({ scale: K }), transform: [1, 0, 0, 1, -x0 * K, -y0 * K] }).promise;
+    var got = []; decodeTiles(cv, rd, got, [[0, 0, cv.width, cv.height]]);
+    if (got.indexOf(pl.num) < 0) bad.push(pl.i + 1);
+    if (n % 4 === 0) await onStep(n + 1, placed.length);
+  }
+  return { ok: placed.length - bad.length, bad: bad };
+}
+
+/* ---------- descargas ---------- */
+async function saveFile(name, bytes, mime) {
+  var blob = new Blob([bytes], { type: mime });
+  if (downloadsCap) {
+    try { await downloadsCap.save({ filename: name, data: blob }); return true; }
+    catch (e1) {
+      if (e1 && /declin|cancel|reject|denied/i.test(String(e1.code || '') + ' ' + String(e1.message || ''))) return false;
+      try { await downloadsCap.save({ filename: name, data: bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes) }); return true; }
+      catch (e2) { return false; }
+    }
+  }
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+  return true;
+}
+function incidentRows() {
+  var kinds = { noExcel: 'Hay albarán pero no está en el Excel', noPdf: 'Está en el Excel pero falta el albarán', badNum: 'Nº de albarán no válido' };
+  var rows = [['Tipo', 'PDF', 'Hojas', 'Referencia', 'Nº de albarán Cotrali', 'Detalle']];
+  S.items.filter(function (i) { return i.kind !== 'ok'; }).forEach(function (i) {
+    var detail = i.kind === 'noExcel' ? 'No se ha reconocido ninguna referencia del Excel en la hoja.' : i.kind === 'noPdf' ? 'Ningún PDF contiene esta referencia.' : i.msg;
+    rows.push([kinds[i.kind], i.pdfIdx == null ? '' : S.pdfs[i.pdfIdx].name, i.pdfIdx == null ? '' : (i.n > 1 ? (i.from + 1) + '-' + (i.to + 1) : String(i.from + 1)), i.ref === '—' ? '' : i.ref, i.num === '—' ? '' : i.num, detail]);
+  });
+  return rows;
+}
+function incidentXlsx() {
+  var ws = XLSX.utils.aoa_to_sheet(incidentRows());
+  ws['!cols'] = [{ wch: 40 }, { wch: 28 }, { wch: 8 }, { wch: 20 }, { wch: 22 }, { wch: 60 }];
+  var wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Incidencias');
+  return new Uint8Array(XLSX.write(wb, { type: 'array', bookType: 'xlsx' }));
+}
+
+/* ---------- acciones ---------- */
+async function goReview() {
+  S.manual = {}; S.busy = { text: 'Analizando los albaranes…', p: 0 }; renderBusy();
+  try {
+    await analyze(async function (name, i, n) { S.busy.text = name + ' · hoja ' + i + ' de ' + n; S.busy.p = i / n; renderBusy(); if (i % 2 === 0) await sleep0(); });
+    S.step = 2; S.sel = 0; S.page = 0; S.filter = 'all'; S.err = '';
+  } catch (e) { S.err = 'No se ha podido analizar: ' + (e && e.message ? e.message : e); S.step = 1; }
+  S.busy = null; render(); window.scrollTo(0, 0);
+}
+function counts() {
+  var ok = S.items.filter(function (i) { return i.kind === 'ok'; });
+  return {
+    ok: ok, nOk: ok.length,
+    nCodes: ok.reduce(function (a, i) { return a + i.n; }, 0),
+    nNoExcel: S.items.filter(function (i) { return i.kind === 'noExcel'; }).length,
+    nNoPdf: S.items.filter(function (i) { return i.kind === 'noPdf'; }).length,
+    nBadNum: S.items.filter(function (i) { return i.kind === 'badNum'; }).length,
+    nReview: ok.filter(function (i) { return i.approx || i.amb; }).length,
+    nBad: S.items.length - ok.length
+  };
+}
+async function handleFiles(files) {
+  files = Array.prototype.slice.call(files || []);
+  if (!files.length) return;
+  var errs = [], pdfs = files.filter(function (f) { return /\.pdf$/i.test(f.name) || f.type === 'application/pdf'; });
+  var xl = files.filter(function (f) { return /\.(xlsx|xlsm|xls|csv)$/i.test(f.name); });
+  var other = files.length - pdfs.length - xl.length;
+  if (other) errs.push(plural(other, 'archivo ignorado', 'archivos ignorados') + ': solo se admiten PDF y Excel (.xlsx).');
+  S.busy = { text: 'Leyendo archivos…', p: 0 }; renderBusy();
+  try {
+    for (var i = 0; i < pdfs.length; i++) {
+      var f = pdfs[i];
+      if (S.pdfs.some(function (p) { return p.name === f.name && p.size === f.size; })) continue;
+      var r = await addPdf(f);
+      if (r.error) errs.push(r.error); else S.pdfs.push(r.pdf);
+    }
+    if (xl.length) {
+      var rx = await readExcel(xl[xl.length - 1]);
+      if (rx.error) errs.push(rx.error); else S.xls = rx.xls;
+      if (xl.length > 1) errs.push('Has subido varios Excel: me quedo con el último («' + xl[xl.length - 1].name + '»).');
+    }
+  } catch (e) { errs.push('Error leyendo los archivos: ' + (e && e.message ? e.message : e)); }
+  S.busy = null; S.err = errs.join(' '); render();
+}
+async function generate() {
+  var c = counts();
+  S.busy = { text: 'Generando códigos…', p: 0 }; S.outputs = []; S.msg = ''; renderBusy();
+  var done = 0;
+  try {
+    for (var pi = 0; pi < S.pdfs.length; pi++) {
+      var pdf = S.pdfs[pi], targets = [];
+      S.items.forEach(function (it) { if (it.kind === 'ok' && it.pdfIdx === pi) for (var k = it.from; k <= it.to; k++) targets.push({ i: k, num: it.num }); });
+      var base = pdf.name.replace(/\.pdf$/i, '');
+      if (!targets.length) { S.outputs.push({ name: pdf.name, outName: base + '_con_codigo.pdf', coded: 0, total: pdf.numPages, bytes: null, tight: 0, error: '' }); continue; }
+      try {
+        var res = await stampPdf(pdf, targets, async function (n, tot) { S.busy.text = 'Generando ' + pdf.name + ' · ' + n + ' de ' + tot; S.busy.p = (done + n) / Math.max(c.nCodes, 1); renderBusy(); await sleep0(); });
+        done += targets.length;
+        S.busy.text = 'Comprobando los códigos de ' + pdf.name + '…'; renderBusy(); await sleep0();
+        var ver = null;
+        try { ver = await verifyStamped(res.bytes, res.placed, async function (n, tot) { S.busy.text = 'Comprobando ' + pdf.name + ' · ' + n + ' de ' + tot; renderBusy(); await sleep0(); }); } catch (ev) { ver = null; }
+        S.outputs.push({ name: pdf.name, outName: base + '_con_codigo.pdf', coded: targets.length, total: pdf.numPages, bytes: res.bytes, tight: res.tight, ver: ver, error: '' });
+      } catch (e) {
+        S.outputs.push({ name: pdf.name, outName: base + '_con_codigo.pdf', coded: 0, total: pdf.numPages, bytes: null, tight: 0, error: 'No se ha podido modificar este PDF (' + (e && e.message ? e.message : 'error') + ').' });
+      }
+    }
+    S.step = 3;
+  } catch (e) { S.err = 'Error al generar: ' + (e && e.message ? e.message : e); }
+  S.busy = null; render();
+}
+async function downloadOne(i) {
+  var o = S.outputs[i]; if (!o || !o.bytes) return;
+  var ok = await saveFile(o.outName, o.bytes, 'application/pdf');
+  S.msg = ok ? 'Descarga de ' + o.outName + ' lista.' : 'No se ha guardado ' + o.outName + '.'; render();
+}
+async function downloadZip() {
+  var good = S.outputs.filter(function (o) { return o.bytes; });
+  if (!good.length) return;
+  S.busy = { text: 'Preparando el ZIP…', p: 0.5 }; renderBusy();
+  var z = new JSZip();
+  good.forEach(function (o) { z.file(o.outName, o.bytes); });
+  if (counts().nBad) z.file('incidencias.xlsx', incidentXlsx());
+  var data = await z.generateAsync({ type: 'uint8array' });
+  S.busy = null;
+  var ok = await saveFile('albaranes_con_codigo.zip', data, 'application/zip');
+  S.msg = ok ? 'ZIP guardado: ' + plural(good.length, 'PDF', 'PDF') + (counts().nBad ? ' y el informe de incidencias.' : '.') : 'No se ha guardado el ZIP.'; render();
+}
+async function downloadReport() {
+  var ok = await saveFile('incidencias.xlsx', incidentXlsx(), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  S.msg = ok ? 'Informe de incidencias guardado.' : 'No se ha guardado el informe.'; render();
+}
+
+/* ---------- vista ---------- */
+function stepsNav() {
+  var defs = ['Subir archivos', 'Revisar coincidencias', 'Descargar'];
+  return '<nav aria-label="Progreso del lote" style="margin-bottom:28px"><ol style="list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:12px 28px">' + defs.map(function (label, i) {
+    var n = i + 1, done = S.step > n, act = S.step === n;
+    var dotBg = act ? '#0069a6' : done ? '#e4f3ea' : '#fff', dotC = act ? '#fff' : done ? '#14532d' : '#566370', dotB = act ? '#0069a6' : done ? '#14532d' : '#7f93a5';
+    return '<li ' + (act ? 'aria-current="step" ' : '') + 'style="display:flex;align-items:center;gap:10px;font-weight:600;color:' + (act || done ? '#14202b' : '#566370') + '"><span style="width:32px;height:32px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:' + dotBg + ';color:' + dotC + ';border:2px solid ' + dotB + ';font-size:15px">' + (done ? '✓' : n) + '</span><span>' + label + '</span></li>';
+  }).join('') + '</ol></nav>';
+}
+function step1() {
+  var hasPdf = S.pdfs.length > 0, hasXls = !!S.xls;
+  var pages = S.pdfs.reduce(function (a, p) { return a + p.numPages; }, 0);
+  var h = '<section aria-labelledby="t1"><h1 id="t1" style="margin:0 0 6px;font-size:32px;line-height:1.2;color:#0069a6">Prepara el lote</h1>' +
+    '<p style="margin:0 0 24px;font-size:18px;color:#3b4957;max-width:62ch">Necesitamos las dos cosas: los PDF con los albaranes y el Excel con la relación entre la referencia y vuestro Nº de albarán. Un PDF puede traer varios albaranes, y cada albarán varias hojas.</p>';
+  if (S.err) h += '<div class="err" role="alert" style="margin-bottom:20px"><p style="margin:0;font-weight:600" class="bad-t">' + esc(S.err) + '</p></div>';
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(440px,100%),1fr));gap:20px">';
+  // PDFs
+  h += '<div class="card" style="padding:24px;display:flex;flex-direction:column;gap:14px"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px"><h2 style="margin:0;font-size:20px">1. PDF de albaranes</h2><span style="font-size:14px;font-weight:600" class="' + (hasPdf ? 'ok-t' : 'bad-t') + '">' + (hasPdf ? 'Cargado' : 'Obligatorio') + '</span></div>';
+  h += '<button class="drop" data-act="pick" data-drop="1" data-fk="pickpdf">' + ICON.up + '<span style="font-size:18px;font-weight:600">Arrastra los PDF aquí o pulsa para elegirlos</span><span style="font-size:15px;color:#3b4957">Puedes subir varios PDF a la vez</span></button>';
+  if (hasPdf) {
+    h += '<ul style="list-style:none;margin:0;padding:0;border:1px solid #e3e9ef;border-radius:8px">' + S.pdfs.map(function (f, i) {
+      return '<li style="display:flex;align-items:center;gap:12px;padding:6px 14px;border-bottom:1px solid #e3e9ef;min-height:44px">' + ICON.pdf + '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(f.name) + '</span><span class="hide-sm" style="font-size:14px;color:#3b4957">' + plural(f.numPages, 'hoja', 'hojas') + ' · ' + fmtSize(f.size) + '</span><button class="link-btn" data-act="rmpdf" data-arg="' + i + '" data-fk="rm' + i + '" aria-label="Quitar ' + esc(f.name) + '">Quitar</button></li>';
+    }).join('') + '</ul>';
+    var scanned = S.pdfs.filter(function (p) { return p.scanned; });
+    if (scanned.length) h += '<div class="err" role="alert"><p style="margin:0;font-size:15px" class="bad-t"><strong>' + esc(scanned.map(function (p) { return p.name; }).join(', ')) + '</strong> parece escaneado (sin texto). No puedo leer la referencia de las hojas, así que quedarán como incidencia.</p></div>';
+    h += '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px"><span class="ok-t" style="display:inline-flex;align-items:center;gap:8px;font-weight:600">' + ICON.check + plural(S.pdfs.length, 'PDF cargado', 'PDF cargados') + ' · ' + plural(pages, 'hoja', 'hojas') + '</span><button class="link-btn" data-act="clrpdf" data-fk="clrpdf">Quitar todos</button></div>';
+  }
+  h += '</div>';
+  // Excel
+  h += '<div class="card" style="padding:24px;display:flex;flex-direction:column;gap:14px"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px"><h2 style="margin:0;font-size:20px">2. Excel de relación</h2><span style="font-size:14px;font-weight:600" class="' + (hasXls ? 'ok-t' : 'bad-t') + '">' + (hasXls ? 'Cargado' : 'Obligatorio') + '</span></div>';
+  if (!hasXls) {
+    h += '<button class="drop" data-act="pick" data-drop="1" data-fk="pickxls">' + ICON.xls.replace('#566370', '#0069a6').replace('width="20" height="20"', 'width="36" height="36"') + '<span style="font-size:18px;font-weight:600">Arrastra el Excel aquí o pulsa para elegirlo</span><span style="font-size:15px;color:#3b4957">Archivo .xlsx con la referencia y vuestro Nº de albarán</span></button>';
+  } else {
+    var x = S.xls, start = x.header ? 1 : 0, data = x.rows.slice(start), opts = function (sel) {
+      var o = '';
+      for (var c = 0; c < x.ncols; c++) {
+        var hd = x.header ? x.rows[0][c] : '', ex = (data.find(function (r) { return r[c]; }) || [])[c] || '';
+        o += '<option value="' + c + '"' + (c === sel ? ' selected' : '') + '>' + colName(c) + (hd ? ' · ' + esc(hd) : '') + (ex ? ' (ej.: ' + esc(ex) + ')' : '') + '</option>';
+      }
+      return o;
+    };
+    h += '<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;border:1px solid #e3e9ef;border-radius:8px;min-height:44px">' + ICON.xls + '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(x.name) + '</span><span class="hide-sm" style="font-size:14px;color:#3b4957">' + fmtSize(x.size) + '</span></div>';
+    h += '<p style="margin:0;color:#3b4957;font-size:15px">Se han leído ' + plural(data.length, 'fila', 'filas') + ' de «' + esc(x.sheet) + '».</p>';
+    h += '<label class="chk"><input type="checkbox" data-change="hdr" ' + (x.header ? 'checked' : '') + '> La primera fila es el encabezado</label>';
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px"><label style="display:flex;flex-direction:column;gap:4px;font-weight:600">Columna de la referencia<select data-change="colref">' + opts(x.colRef) + '</select></label><label style="display:flex;flex-direction:column;gap:4px;font-weight:600">Columna del Nº de albarán Cotrali<select data-change="colnum">' + opts(x.colNum) + '</select></label></div>';
+    if (x.colRef === x.colNum) h += '<p class="bad-t" role="alert" style="margin:0;font-weight:600">Elige columnas distintas para la referencia y el Nº de albarán.</p>';
+    h += '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px"><span class="ok-t" style="display:inline-flex;align-items:center;gap:8px;font-weight:600">' + ICON.check + 'Excel leído correctamente</span><button class="link-btn" data-act="clrxls" data-fk="clrxls">Quitar</button></div>';
+  }
+  h += '</div></div>';
+  var api = !!apiUrl();
+  h += '<div class="card" style="margin-top:20px;padding:24px;display:flex;flex-direction:column;gap:12px"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px"><h2 style="margin:0;font-size:20px">3. Servicio de lectura de hojas</h2><span style="font-size:14px;font-weight:600" class="' + (api ? (S.code ? 'ok-t' : 'bad-t') : 'bad-t') + '">' + (api ? (S.code ? 'Listo' : 'Obligatorio') : 'No configurado') + '</span></div>';
+  if (api) h += '<p style="margin:0;font-size:15px;color:#3b4957">Cada hoja se envía al servicio de lectura (OCR) para identificar bien los números, aunque el PDF sea una foto. Las imágenes no se guardan.</p><label style="display:flex;flex-direction:column;gap:4px;font-weight:600;max-width:360px">Código de acceso del equipo<input type="password" autocomplete="off" data-input="code" value="' + esc(S.code) + '" style="min-height:44px;border:2px solid #7f93a5;border-radius:6px;padding:0 10px"></label>';
+  else h += '<p style="margin:0;font-size:15px" class="bad-t"><strong>El servicio de lectura no está configurado</strong> (falta la dirección en <code>config.js</code>). Se usará solo el texto del PDF y los códigos de barras impresos, y las hojas escaneadas pueden quedar sin identificar.</p>';
+  h += '</div>';
+  var miss = []; if (!hasPdf) miss.push('los PDF de albaranes'); if (!hasXls) miss.push('el Excel'); if (api && !S.code) miss.push('el código de acceso');
+  var can = hasPdf && hasXls && S.xls.colRef !== S.xls.colNum && (!api || !!S.code);
+  h += '<div class="card" style="margin-top:24px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px;padding:16px 24px"><p role="status" style="margin:0;font-size:16px">' + (miss.length ? 'Falta subir ' + miss.join(' y ') + ' para continuar.' : 'Todo listo: ' + plural(S.pdfs.length, 'PDF', 'PDF') + ' (' + plural(pages, 'hoja', 'hojas') + ') y el Excel de relación.') + '</p><button class="btn btn-primary" data-act="to2" data-fk="to2"' + (can ? '' : ' disabled') + '>Continuar</button></div>';
+  h += '<p style="margin:14px 0 0;font-size:14px;color:#3b4957">Los archivos se procesan en tu navegador: no se envían a ningún servidor.</p></section>';
+  return h;
+}
+function assignSelect(it) {
+  var o = '<option value="">— Sin asignar —</option>' + S.entries.filter(function (e) { return !e.used || e.key === it.key; }).map(function (e) {
+    return '<option value="' + esc(e.key) + '"' + (e.key === it.key ? ' selected' : '') + '>' + esc(e.ref + ' · ' + (e.num || 'sin Nº') + (e.desc ? ' · ' + e.desc : '')) + '</option>';
+  }).join('');
+  return '<label style="display:flex;flex-direction:column;gap:4px;font-weight:600;font-size:15px">Asignar a una fila del Excel<select data-change="assign" data-arg="' + esc(it.id) + '" data-fk="assign">' + o + '</select></label>';
+}
+function step2() {
+  var c = counts();
+  var h = '<section aria-labelledby="t2"><h1 id="t2" style="margin:0 0 6px;font-size:32px;line-height:1.2;color:#0069a6">Revisa las coincidencias</h1><p style="margin:0 0 20px;font-size:18px;color:#3b4957;max-width:64ch">Cada albarán se cruza con el Excel por su referencia. Elige uno para ver dónde quedará el código de barras.</p>';
+  h += '<div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 20px;margin-bottom:16px"><div style="display:flex;flex-wrap:wrap;gap:10px">';
+  h += '<span class="pill" style="background:#e4f3ea;color:#14532d">' + ICON.check + plural(c.nOk, 'albarán con coincidencia', 'albaranes con coincidencia') + ' (' + plural(c.nCodes, 'código', 'códigos') + ')</span>';
+  if (c.nReview) h += '<span class="pill" style="background:#fff3d6;color:#6b4300">' + ICON.warn + plural(c.nReview, 'albarán a revisar', 'albaranes a revisar') + ' (lectura dudosa)</span>';
+  var bad = function (n, t1, tn) { return n ? '<span class="pill" style="background:#fde8ea;color:#9b0014">' + ICON.warn + n + ' ' + (n === 1 ? t1 : tn) + '</span>' : ''; };
+  h += bad(c.nNoExcel, 'albarán sin fila en el Excel', 'albaranes sin fila en el Excel') + bad(c.nNoPdf, 'fila del Excel sin albarán', 'filas del Excel sin albarán') + bad(c.nBadNum, 'Nº no válido', 'Nº no válidos');
+  h += '</div><div role="group" aria-label="Filtrar albaranes" style="display:flex"><button class="seg" aria-pressed="' + (S.filter === 'all') + '" data-act="filter" data-arg="all" data-fk="fall" style="border-radius:6px 0 0 6px">Todos</button><button class="seg" aria-pressed="' + (S.filter === 'bad') + '" data-act="filter" data-arg="bad" data-fk="fbad" style="border-radius:0 6px 6px 0;margin-left:-2px">Con incidencias</button></div></div>';
+  if (S.apiFail) h += '<p class="bad-t" role="status" style="margin:0 0 14px;font-weight:600">' + ICON.warn + ' ' + plural(S.apiFail, 'hoja no se pudo leer', 'hojas no se pudieron leer') + ' con el servicio; para ellas se ha usado el texto del PDF y el código de barras.</p>';
+  if (S.dupConflicts) h += '<p class="bad-t" role="status" style="margin:0 0 14px;font-weight:600">' + ICON.warn + ' ' + plural(S.dupConflicts, 'referencia repetida en el Excel con distinto Nº', 'referencias repetidas en el Excel con distinto Nº') + '; se usa la primera fila.</p>';
+  h += '<div style="display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start"><div class="card" style="flex:999 1 560px;min-width:0;overflow-x:auto"><table><caption class="sr">Albaranes y su número asignado</caption><thead><tr><th scope="col">Albarán</th><th scope="col">Referencia</th><th scope="col">Nº de albarán Cotrali</th><th scope="col">Hojas</th><th scope="col">Estado</th></tr></thead><tbody>';
+  S.items.forEach(function (it, i) {
+    if (S.filter === 'bad' && it.kind === 'ok') return;
+    var st = it.kind === 'ok' && (it.approx || it.amb) ? '<span style="display:inline-flex;align-items:center;gap:6px;font-weight:600;color:#6b4300">' + ICON.warn + 'Revisar</span>' : it.kind === 'ok' ? '<span class="ok-t" style="display:inline-flex;align-items:center;gap:6px;font-weight:600">' + ICON.check + (it.manual ? 'Asignada' : 'Lista') + '</span>'
+      : '<span class="bad-t" style="display:inline-flex;align-items:center;gap:6px;font-weight:600">' + ICON.warn + (it.kind === 'noExcel' ? 'Falta en el Excel' : it.kind === 'noPdf' ? 'Falta el albarán' : 'Nº no válido') + '</span>';
+    h += '<tr style="background:' + (S.sel === i ? '#e8f1f8' : '#fff') + '"><td><button class="rowbtn" aria-pressed="' + (S.sel === i) + '" data-act="sel" data-arg="' + i + '" data-fk="r' + i + '">' + esc(it.label) + '</button></td><td style="white-space:nowrap">' + esc(it.ref) + (it.desc ? '<br><span style="font-size:13px;color:#3b4957">' + esc(it.desc) + '</span>' : '') + '</td><td style="white-space:nowrap;font-weight:600">' + esc(it.num || '—') + '</td><td>' + (it.kind === 'ok' ? it.n : '—') + '</td><td style="white-space:nowrap">' + st + '</td></tr>';
+  });
+  if (!S.items.length) h += '<tr><td colspan="5">No se ha encontrado ningún albarán.</td></tr>';
+  h += '</tbody></table></div>';
+  // vista previa
+  var it = S.items[S.sel] || S.items[0];
+  h += '<aside aria-label="Vista previa del albarán" class="card" style="flex:1 1 340px;min-width:0;padding:20px;display:flex;flex-direction:column;gap:14px"><h2 style="margin:0;font-size:20px">Vista previa</h2>';
+  if (it) {
+    h += '<p style="margin:0;font-size:15px;color:#3b4957">' + esc(it.label) + '</p>';
+    if (it.kind === 'noPdf') {
+      h += '<div class="err"><p style="margin:0 0 6px;font-weight:700" class="bad-t">Está en el Excel, pero falta el albarán</p><p style="margin:0;font-size:15px">El Excel tiene la referencia <strong>' + esc(it.ref) + '</strong> con el Nº <strong>' + esc(it.num) + '</strong>, pero ningún PDF contiene esa referencia. Sube el albarán que falta o continúa sin él.</p></div>';
+    } else {
+      var pi = Math.min(S.page, it.n - 1);
+      h += '<div style="display:flex;justify-content:center"><canvas id="pv" aria-label="Hoja del albarán con el código de barras" style="border:1px solid #b6c4d1;box-shadow:0 2px 8px rgba(20,32,43,.12);max-width:100%;background:#fff"></canvas></div>';
+      h += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><button class="btn btn-secondary" data-act="prev" data-fk="prev" style="padding:0 14px"' + (pi === 0 ? ' disabled' : '') + '>Anterior</button><span role="status" style="font-weight:600">Hoja ' + (pi + 1) + ' de ' + it.n + '</span><button class="btn btn-secondary" data-act="next" data-fk="next" style="padding:0 14px"' + (pi >= it.n - 1 ? ' disabled' : '') + '>Siguiente</button></div>';
+      if (it.kind === 'ok') {
+        h += '<div role="group" aria-label="Posición preferida del código de barras" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px">' + [['tr', 'Arriba derecha'], ['tl', 'Arriba izquierda'], ['br', 'Abajo derecha'], ['bl', 'Abajo izquierda']].map(function (p) { return '<button class="seg" style="border-radius:6px" aria-pressed="' + (S.pos === p[0]) + '" data-act="pos" data-arg="' + p[0] + '" data-fk="pos' + p[0] + '">' + p[1] + '</button>'; }).join('') + '</div>';
+        h += '<p id="pvnote" role="status" style="margin:0;font-size:14px;color:#3b4957">Code 128 con el Nº <strong>' + esc(it.num) + '</strong>, repetido en ' + (it.n === 1 ? 'la hoja' : 'las ' + it.n + ' hojas') + ' del albarán. Se coloca en la zona libre más cercana a la esquina elegida.</p>';
+        var SRC = { texto: 'la referencia escrita en la hoja', barras: 'el código de barras impreso en la hoja', aprox: 'una lectura aproximada del texto (OCR con errores)', vecinas: 'las hojas vecinas del mismo albarán' };
+        if (it.srcs && it.srcs.length) h += '<p style="margin:0;font-size:14px;color:#3b4957">Identificado por: ' + it.srcs.map(function (k) { return SRC[k]; }).join('; ') + '.</p>';
+        if (it.approx) h += '<div style="border:2px solid #b8860b;border-radius:8px;padding:12px;background:#fff9e6;font-size:14px"><p style="margin:0 0 8px;font-weight:700;color:#6b4300">Lectura dudosa</p><p style="margin:0 0 10px">La referencia no se leyó limpia en alguna hoja (texto del escaneado con errores) y se ha deducido. Comprueba que es la fila correcta o cámbiala.</p>' + assignSelect(it) + '</div>';
+        else if (it.manual) h += '<div style="border:1px solid #d5dde5;border-radius:8px;padding:12px;background:#f8fafc">' + assignSelect(it) + '</div>';
+        if (it.amb) h += '<p style="margin:0;font-size:14px" class="bad-t"><strong>Ojo:</strong> en alguna hoja aparecen varias referencias del Excel; he usado la más larga. Compruébalo en la vista previa.</p>';
+      } else if (it.kind === 'noExcel') {
+        var pgx = S.pdfs[it.pdfIdx].pages[it.from + pi], txt = pgx.ocr || pgx.text;
+        h += '<div class="err"><p style="margin:0 0 6px;font-weight:700" class="bad-t">No he podido relacionar esta hoja con el Excel</p><p style="margin:0 0 10px;font-size:15px">' + (S.pdfs[it.pdfIdx].scanned ? 'El PDF no tiene texto (parece escaneado). ' : '') + 'Puede que la referencia no esté en el Excel o que el escaneado la haya leído mal. Si sabes cuál es, asígnala a mano; si no, continúa sin este albarán.</p>' + assignSelect(it) + (txt ? '<p style="margin:10px 0 0;font-size:13px;color:#3b4957">Texto leído al inicio de la hoja: «' + esc(txt.slice(0, 200)) + (txt.length > 200 ? '…' : '') + '»</p>' : '') + '</div>';
+      } else {
+        h += '<div class="err"><p style="margin:0 0 6px;font-weight:700" class="bad-t">No se puede generar el código</p><p style="margin:0;font-size:15px">' + esc(it.msg) + ' Corrígelo en el Excel y vuelve a subirlo, o continúa sin este albarán.</p></div>';
+      }
+    }
+  }
+  h += '</aside></div>';
+  h += '<div class="card" style="margin-top:24px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px;padding:16px 24px"><button class="btn btn-secondary" data-act="to1" data-fk="to1">Volver</button><div style="display:flex;flex-wrap:wrap;align-items:center;gap:16px"><p style="margin:0;font-size:15px;color:#3b4957">' + (c.nBad ? 'Quedarán fuera ' + plural(c.nBad, 'incidencia', 'incidencias') + '.' : 'Sin incidencias.') + '</p><button class="btn btn-primary" data-act="gen" data-fk="gen"' + (c.nCodes ? '' : ' disabled') + '>Generar ' + plural(c.nCodes, 'código', 'códigos') + '</button></div></div></section>';
+  return h;
+}
+function step3() {
+  var c = counts(), good = S.outputs.filter(function (o) { return o.bytes; });
+  var h = '<section aria-labelledby="t3"><div class="card" style="padding:28px;display:flex;flex-wrap:wrap;gap:24px;align-items:center;justify-content:space-between;margin-bottom:20px"><div style="display:flex;gap:18px;align-items:center;min-width:0;flex:1 1 360px"><span style="width:56px;height:56px;border-radius:50%;background:#e4f3ea;color:#14532d;display:inline-flex;align-items:center;justify-content:center;flex:none">' + ICON.check.replace(/width="18" height="18"/, 'width="30" height="30"') + '</span><div><h1 id="t3" style="margin:0 0 4px;font-size:30px;line-height:1.2;color:#0069a6">' + plural(c.nOk, 'albarán listo', 'albaranes listos') + '</h1><p style="margin:0;font-size:17px;color:#3b4957">' + plural(c.nCodes, 'hoja lleva', 'hojas llevan') + ' su código de barras con el Nº de albarán de Cotrali. ' + (c.nBad ? plural(c.nBad, 'incidencia quedó', 'incidencias quedaron') + ' fuera del lote.' : 'No ha habido incidencias.') + '</p></div></div>';
+  h += '<div style="display:flex;flex-wrap:wrap;gap:12px"><button class="btn btn-primary" data-act="zip" data-fk="zip"' + (good.length ? '' : ' disabled') + '>' + ICON.dl + 'Descargar todo (ZIP)</button>' + (c.nBad ? '<button class="btn btn-secondary" data-act="report" data-fk="report">Informe de incidencias (.xlsx)</button>' : '') + '<button class="btn btn-secondary" data-act="restart" data-fk="restart">Nuevo lote</button></div></div>';
+  h += '<p role="status" style="margin:0 0 14px;min-height:24px;font-weight:600" class="ok-t">' + esc(S.msg) + '</p>';
+  if (S.err) h += '<div class="err" role="alert" style="margin-bottom:14px"><p style="margin:0;font-weight:600" class="bad-t">' + esc(S.err) + '</p></div>';
+  h += '<div class="card" style="overflow-x:auto"><table><caption class="sr">PDF generados</caption><thead><tr><th scope="col">PDF</th><th scope="col">Hojas con código</th><th scope="col">Estado</th><th scope="col"><span class="sr">Descarga</span></th></tr></thead><tbody>';
+  S.outputs.forEach(function (o, i) {
+    var miss = o.total - o.coded, note = o.error || (o.coded === 0 ? 'Sin hojas con código' : miss > 0 ? plural(miss, 'hoja sin código por incidencia', 'hojas sin código por incidencia') : 'Completo');
+    if (o.ver) note += o.ver.bad.length ? ' · ⚠ no he podido releer el código de ' + plural(o.ver.bad.length, 'hoja', 'hojas') + ' (' + o.ver.bad.slice(0, 8).join(', ') + (o.ver.bad.length > 8 ? '…' : '') + '): revísalas' : ' · ✓ todos los códigos releídos y correctos';
+    if (o.tight) note += ' · ' + plural(o.tight, 'hoja sin hueco libre del todo', 'hojas sin hueco libre del todo');
+    h += '<tr><td style="white-space:nowrap;font-weight:600">' + esc(o.outName) + '</td><td style="white-space:nowrap">' + o.coded + ' de ' + plural(o.total, 'hoja', 'hojas') + '</td><td style="font-weight:600" class="' + ((miss > 0 || o.error || (o.ver && o.ver.bad.length)) ? 'bad-t' : 'ok-t') + '">' + esc(note) + '</td><td style="text-align:right">' + (o.bytes ? '<button class="link-btn" data-act="dl" data-arg="' + i + '" data-fk="dl' + i + '">Descargar PDF</button>' : '') + '</td></tr>';
+  });
+  h += '</tbody></table></div></section>';
+  return h;
+}
+function view() {
+  return '<header style="background:#0069a6;color:#fff"><div style="max-width:1120px;margin:0 auto;padding:14px 32px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 24px"><div style="display:flex;flex-direction:column;line-height:1"><span style="font-size:30px;font-weight:700;letter-spacing:.06em">COTRALI</span><span style="font-size:13px;font-weight:600;letter-spacing:.08em;margin-top:2px">Logística Integral</span></div><span style="font-size:18px;font-weight:600">Códigos de barras en albaranes</span></div></header>' +
+    '<main style="max-width:1120px;width:100%;margin:0 auto;padding:28px 32px 48px;flex:1">' + stepsNav() + (S.step === 1 ? step1() : S.step === 2 ? step2() : step3()) + '</main>' +
+    '<footer style="border-top:1px solid #d5dde5;background:#fff"><div style="max-width:1120px;margin:0 auto;padding:16px 32px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 24px;font-size:14px;color:#3b4957"><span>Cotrali · C/ Tarraca, 4 · Pla-Za · 50197 Zaragoza</span><span>976 915 915 · www.cotrali.com</span></div></footer><div id="busy"></div>';
+}
+function renderBusy() {
+  var el = $('#busy'); if (!el) return;
+  el.innerHTML = S.busy ? '<div class="overlay"><div role="status" aria-live="polite"><p style="margin:0;font-size:18px;font-weight:600">' + esc(S.busy.text) + '</p><div class="bar"><i style="width:' + Math.round(Math.min(1, S.busy.p || 0) * 100) + '%"></i></div></div></div>' : '';
+}
+function render() {
+  var ae = document.activeElement, fk = ae && ae.dataset ? ae.dataset.fk : null, sy = window.scrollY;
+  $('#app').innerHTML = view();
+  renderBusy();
+  if (fk) { var el = $('[data-fk="' + fk + '"]'); if (el && !el.disabled) el.focus({ preventScroll: true }); }
+  window.scrollTo(0, sy);
+  if (S.step === 2) drawPreview();
+}
+
+/* ---------- vista previa real de la hoja ---------- */
+async function drawPreview() {
+  var cv = $('#pv'); if (!cv) return;
+  var it = S.items[S.sel] || S.items[0]; if (!it || it.pdfIdx == null) return;
+  var token = ++pvToken, pdf = S.pdfs[it.pdfIdx], pi = Math.min(S.page, it.n - 1), pageNo = it.from + pi + 1;
+  try {
+    var page = await pdf.doc.getPage(pageNo), base = page.getViewport({ scale: 1 });
+    var cssW = Math.min(300, cv.parentElement.clientWidth || 300), dpr = window.devicePixelRatio || 1, k = cssW / base.width * dpr;
+    var vp = page.getViewport({ scale: k });
+    var off = document.createElement('canvas'); off.width = Math.ceil(vp.width); off.height = Math.ceil(vp.height);
+    var oc = off.getContext('2d'); oc.fillStyle = '#fff'; oc.fillRect(0, 0, off.width, off.height);
+    await page.render({ canvasContext: oc, viewport: vp }).promise;
+    var note = null;
+    if (it.kind === 'ok') {
+      var g = await getInk(pdf, pageNo), geo = geom(it.num, g.W), sp = findSpot(g, geo.boxW, geo.boxH, S.pos), s = k;
+      oc.fillStyle = '#fff'; oc.fillRect(sp.x * s, sp.y * s, geo.boxW * s, geo.boxH * s);
+      var x = sp.x + (geo.boxW - geo.barsW) / 2, yb = sp.y + 4;
+      oc.fillStyle = '#000';
+      geo.w.forEach(function (w, i) { var wd = w * geo.mw; if (i % 2 === 0) oc.fillRect(x * s, yb * s, wd * s, BH * s); x += wd; });
+      oc.font = '600 ' + (FS * s) + 'px Helvetica, Arial, sans-serif'; oc.textAlign = 'center'; oc.textBaseline = 'alphabetic';
+      oc.fillText(it.num, (sp.x + geo.boxW / 2) * s, (sp.y + 4 + BH + 3 + FS) * s);
+      oc.strokeStyle = '#0069a6'; oc.setLineDash([6 * dpr, 4 * dpr]); oc.lineWidth = 2 * dpr; oc.strokeRect((sp.x - 3) * s, (sp.y - 3) * s, (geo.boxW + 6) * s, (geo.boxH + 6) * s);
+      if (sp.tight) note = 'En esta hoja no hay un hueco totalmente libre: el código irá donde menos contenido tapa. Prueba otra esquina.';
+    }
+    if (token !== pvToken) return;
+    cv.width = off.width; cv.height = off.height; cv.style.width = cssW + 'px'; cv.style.height = (base.height / base.width * cssW) + 'px';
+    cv.getContext('2d').drawImage(off, 0, 0);
+    if (note) { var n = $('#pvnote'); if (n) { n.textContent = note; n.className = 'bad-t'; n.style.fontWeight = '600'; } }
+  } catch (e) { /* vista previa no disponible */ }
+}
+
+/* ---------- eventos ---------- */
+document.addEventListener('click', function (e) {
+  var b = e.target.closest('[data-act]'); if (!b || b.disabled) return;
+  var a = b.dataset.act, arg = b.dataset.arg;
+  if (a === 'pick') { $('#fpick').value = ''; $('#fpick').click(); }
+  else if (a === 'rmpdf') { S.pdfs.splice(+arg, 1); S.err = ''; render(); }
+  else if (a === 'clrpdf') { S.pdfs = []; S.err = ''; render(); }
+  else if (a === 'clrxls') { S.xls = null; S.err = ''; render(); }
+  else if (a === 'to2') { goReview(); }
+  else if (a === 'to1') { S.step = 1; render(); window.scrollTo(0, 0); }
+  else if (a === 'filter') { S.filter = arg; render(); }
+  else if (a === 'sel') { S.sel = +arg; S.page = 0; render(); }
+  else if (a === 'prev') { S.page = Math.max(0, S.page - 1); render(); }
+  else if (a === 'next') { S.page += 1; render(); }
+  else if (a === 'pos') { S.pos = arg; render(); }
+  else if (a === 'gen') { generate(); }
+  else if (a === 'dl') { downloadOne(+arg); }
+  else if (a === 'zip') { downloadZip(); }
+  else if (a === 'report') { downloadReport(); }
+  else if (a === 'restart') { S.step = 1; S.pdfs = []; S.xls = null; S.items = []; S.outputs = []; S.msg = ''; S.err = ''; inkCache.clear(); render(); window.scrollTo(0, 0); }
+});
+document.addEventListener('change', async function (e) {
+  var t = e.target;
+  if (t.id === 'fpick') { handleFiles(t.files); return; }
+  var a = t.dataset && t.dataset.change; if (!a || !S.xls) return;
+  if (a === 'assign') {
+    var id = t.dataset.arg; S.manual[id] = t.value || null;
+    await analyze();
+    var ni = S.items.findIndex(function (i) { return i.id === id; });
+    S.sel = ni >= 0 ? ni : 0; render(); return;
+  }
+  if (a === 'hdr') { S.xls.header = t.checked; guessCols(S.xls); }
+  else if (a === 'colref') S.xls.colRef = +t.value;
+  else if (a === 'colnum') S.xls.colNum = +t.value;
+  render();
+});
+document.addEventListener('input', function (e) {
+  var t = e.target; if (t.dataset && t.dataset.input === 'code') {
+    S.code = t.value;
+    var btn = $('[data-act=to2]'); if (btn) { var can = S.pdfs.length && S.xls && S.xls.colRef !== S.xls.colNum && !!S.code; btn.disabled = !can; }
+  }
+});
+['dragenter', 'dragover'].forEach(function (ev) { document.addEventListener(ev, function (e) { if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') >= 0) { e.preventDefault(); var d = e.target.closest && e.target.closest('[data-drop]'); document.querySelectorAll('.drop.over').forEach(function (x) { x.classList.remove('over'); }); if (d) d.classList.add('over'); } }); });
+document.addEventListener('dragleave', function (e) { var d = e.target.closest && e.target.closest('[data-drop]'); if (d) d.classList.remove('over'); });
+document.addEventListener('drop', function (e) {
+  if (!(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length)) return;
+  e.preventDefault(); document.querySelectorAll('.drop.over').forEach(function (x) { x.classList.remove('over'); });
+  if (S.step === 1) handleFiles(e.dataTransfer.files);
+});
+
+/* ---------- arranque ---------- */
+function boot() {
+  if (!window.pdfjsLib || !window.PDFLib || !window.XLSX || !window.JSZip) {
+    $('#app').innerHTML = '<main style="max-width:700px;margin:60px auto;padding:0 24px"><div class="err" role="alert"><p style="margin:0 0 6px;font-weight:700" class="bad-t">No se han podido cargar los componentes de la aplicación</p><p style="margin:0">Comprueba la conexión a internet y recarga la página.</p></div></main>';
+    return;
+  }
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  render();
+  try { if (window.claude && window.claude.use) window.claude.use('downloads').then(function (d) { downloadsCap = d || null; }).catch(function () {}); } catch (e) {}
+  window.__cotrali = { S: S, handleFiles: handleFiles, generate: generate };
+}
+window.addEventListener('load', boot);
+})();
+</script>
+</body>
+</html>
