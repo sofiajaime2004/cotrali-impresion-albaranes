@@ -704,7 +704,8 @@ function step2() {
       h += '<div class="err"><p style="margin:0 0 6px;font-weight:700" class="bad-t">Está en el Excel, pero falta el albarán</p><p style="margin:0;font-size:15px">El Excel tiene la referencia <strong>' + esc(it.ref) + '</strong> con el Nº <strong>' + esc(it.num) + '</strong>, pero ningún PDF contiene esa referencia. Sube el albarán que falta o continúa sin él.</p></div>';
     } else {
       var pi = Math.min(S.page, it.n - 1);
-      h += '<div style="display:flex;justify-content:center"><canvas id="pv" aria-label="Hoja del albarán con el código de barras" style="border:1px solid #b6c4d1;box-shadow:0 2px 8px rgba(20,32,43,.12);max-width:100%;background:#fff"></canvas></div>';
+      h += '<div style="display:flex;justify-content:center"><canvas id="pv" data-act="big" title="Pulsa para ampliar" aria-label="Hoja del albarán con el código de barras" style="border:1px solid #b6c4d1;box-shadow:0 2px 8px rgba(20,32,43,.12);max-width:100%;background:#fff;cursor:zoom-in"></canvas></div>';
+      h += '<button class="btn btn-secondary" data-act="big" data-fk="big" style="width:100%">Ampliar la hoja</button>';
       h += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><button class="btn btn-secondary" data-act="prev" data-fk="prev" style="padding:0 14px"' + (pi === 0 ? ' disabled' : '') + '>Anterior</button><span role="status" style="font-weight:600">Hoja ' + (pi + 1) + ' de ' + it.n + '</span><button class="btn btn-secondary" data-act="next" data-fk="next" style="padding:0 14px"' + (pi >= it.n - 1 ? ' disabled' : '') + '>Siguiente</button></div>';
       if (it.kind === 'ok') {
         h += '<div role="group" aria-label="Posición preferida del código de barras" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px">' + [['tr', 'Arriba derecha'], ['tl', 'Arriba izquierda'], ['br', 'Abajo derecha'], ['bl', 'Abajo izquierda']].map(function (p) { return '<button class="seg" style="border-radius:6px" aria-pressed="' + (S.pos === p[0]) + '" data-act="pos" data-arg="' + p[0] + '" data-fk="pos' + p[0] + '">' + p[1] + '</button>'; }).join('') + '</div>';
@@ -763,11 +764,15 @@ function render() {
 /* ---------- vista previa real de la hoja ---------- */
 async function drawPreview() {
   var cv = $('#pv'); if (!cv) return;
-  var it = S.items[S.sel] || S.items[0]; if (!it || it.pdfIdx == null) return;
-  var token = ++pvToken, pdf = S.pdfs[it.pdfIdx], pi = Math.min(S.page, it.n - 1), pageNo = it.from + pi + 1;
+  var note = await paintSheet(cv, function (c) { return Math.min(300, c.parentElement.clientWidth || 300); }, ++pvToken, function () { return pvToken; });
+  if (note) { var n = $('#pvnote'); if (n) { n.textContent = note; n.className = 'bad-t'; n.style.fontWeight = '600'; } }
+}
+async function paintSheet(cv, widthFn, token, curTok) {
+  var it = S.items[S.sel] || S.items[0]; if (!it || it.pdfIdx == null) return null;
+  var pdf = S.pdfs[it.pdfIdx], pi = Math.min(S.page, it.n - 1), pageNo = it.from + pi + 1;
   try {
     var page = await pdf.doc.getPage(pageNo), base = page.getViewport({ scale: 1 });
-    var cssW = Math.min(300, cv.parentElement.clientWidth || 300), dpr = window.devicePixelRatio || 1, k = cssW / base.width * dpr;
+    var cssW = widthFn(cv), dpr = window.devicePixelRatio || 1, k = cssW / base.width * dpr;
     var vp = page.getViewport({ scale: k });
     var off = document.createElement('canvas'); off.width = Math.ceil(vp.width); off.height = Math.ceil(vp.height);
     var oc = off.getContext('2d'); oc.fillStyle = '#fff'; oc.fillRect(0, 0, off.width, off.height);
@@ -786,12 +791,71 @@ async function drawPreview() {
       oc.strokeStyle = '#0069a6'; oc.setLineDash([6 * dpr, 4 * dpr]); oc.lineWidth = 2 * dpr; oc.strokeRect((sp.x - 3) * s, (sp.y - 3) * s, (geo.boxW + 6) * s, (geo.boxH + 6) * s);
       if (sp.tight) note = 'En esta hoja no hay un hueco totalmente libre: el código irá donde menos contenido tapa. Prueba otra esquina.';
     }
-    if (token !== pvToken) return;
+    if (token !== curTok()) return null;
     cv.width = off.width; cv.height = off.height; cv.style.width = cssW + 'px'; cv.style.height = (base.height / base.width * cssW) + 'px';
+    cv.style.maxWidth = cv.id === 'pvbig' ? 'none' : '100%';
     cv.getContext('2d').drawImage(off, 0, 0);
-    if (note) { var n = $('#pvnote'); if (n) { n.textContent = note; n.className = 'bad-t'; n.style.fontWeight = '600'; } }
-  } catch (e) { /* vista previa no disponible */ }
+    return note;
+  } catch (e) { return null; /* vista previa no disponible */ }
 }
+
+/* ---------- vista ampliada ---------- */
+var bigTok = 0, bigZoom = 1, bigOpen = false, bigBase = 900;
+function bigEl() { return document.getElementById('bigov'); }
+function openBig() {
+  var it = S.items[S.sel] || S.items[0]; if (!it || it.pdfIdx == null) return;
+  closeBig(true);
+  bigOpen = true; bigZoom = 1; S.__prevFocus = document.activeElement;
+  var o = document.createElement('div'); o.id = 'bigov'; o.setAttribute('role', 'dialog'); o.setAttribute('aria-modal', 'true'); o.setAttribute('aria-label', 'Hoja ampliada');
+  o.style.cssText = 'position:fixed;inset:0;z-index:60;background:rgba(20,32,43,.92);display:flex;flex-direction:column';
+  o.innerHTML = '<div style="background:#fff;padding:10px 16px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;border-bottom:1px solid #d5dde5">'
+    + '<div style="min-width:0"><div id="bigtitle" style="font-weight:700;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div><div id="bignote" role="status" style="font-size:14px;color:#3b4957"></div></div>'
+    + '<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">'
+    + '<button class="btn btn-secondary" data-act="bigprev" id="bigprev" style="padding:0 12px;min-height:40px">Anterior</button>'
+    + '<span id="bigpg" style="font-weight:600;font-size:14px;min-width:84px;text-align:center"></span>'
+    + '<button class="btn btn-secondary" data-act="bignext" id="bignext" style="padding:0 12px;min-height:40px">Siguiente</button>'
+    + '<span style="width:8px"></span>'
+    + '<button class="btn btn-secondary" data-act="bigout" aria-label="Alejar" style="padding:0 14px;min-height:40px">−</button>'
+    + '<span id="bigz" style="font-weight:600;font-size:14px;min-width:46px;text-align:center"></span>'
+    + '<button class="btn btn-secondary" data-act="bigin" aria-label="Acercar" style="padding:0 14px;min-height:40px">+</button>'
+    + '<button class="btn btn-secondary" data-act="bigfit" style="padding:0 12px;min-height:40px">Ajustar</button>'
+    + '<button class="btn" data-act="bigclose" id="bigclose" style="padding:0 16px;min-height:40px">Cerrar</button></div></div>'
+    + '<div id="bigscroll" style="flex:1;overflow:auto;padding:20px;text-align:center"><canvas id="pvbig" aria-label="Hoja ampliada del albarán" style="background:#fff;box-shadow:0 4px 20px rgba(0,0,0,.4)"></canvas></div>';
+  document.body.appendChild(o); document.body.style.overflow = 'hidden';
+  paintBig(true); var c = document.getElementById('bigclose'); if (c) c.focus();
+}
+function closeBig(silent) {
+  var o = bigEl(); if (o) o.remove(); bigOpen = false; document.body.style.overflow = '';
+  if (!silent && S.__prevFocus && S.__prevFocus.focus) { try { S.__prevFocus.focus(); } catch (e) {} }
+}
+async function paintBig(fit) {
+  var o = bigEl(); if (!o) return;
+  var it = S.items[S.sel] || S.items[0], cv = document.getElementById('pvbig'), sc = document.getElementById('bigscroll'); if (!it || !cv) return;
+  var pi = Math.min(S.page, it.n - 1);
+  document.getElementById('bigtitle').textContent = it.label;
+  document.getElementById('bigpg').textContent = 'Hoja ' + (pi + 1) + ' de ' + it.n;
+  document.getElementById('bigprev').disabled = pi === 0; document.getElementById('bignext').disabled = pi >= it.n - 1;
+  if (fit) { bigBase = Math.max(320, Math.min(sc.clientWidth - 40, 1000)); bigZoom = 1; }
+  document.getElementById('bigz').textContent = Math.round(bigZoom * 100) + '%';
+  var nt = document.getElementById('bignote'); nt.textContent = it.kind === 'ok' ? 'El recuadro azul discontinuo marca dónde se imprimirá el código.' : ''; nt.className = ''; nt.style.fontWeight = '';
+  var note = await paintSheet(cv, function () { return Math.round(bigBase * bigZoom); }, ++bigTok, function () { return bigTok; });
+  if (note && bigEl()) { nt.textContent = note; nt.className = 'bad-t'; nt.style.fontWeight = '600'; }
+}
+function bigMove(d) {
+  var it = S.items[S.sel] || S.items[0]; if (!it) return;
+  var np = Math.max(0, Math.min(it.n - 1, S.page + d)); if (np === S.page) return;
+  S.page = np; render(); paintBig(false);
+}
+function bigScale(f) { bigZoom = Math.max(0.5, Math.min(2.5, bigZoom * f)); paintBig(false); }
+document.addEventListener('keydown', function (e) {
+  if (!bigOpen) return;
+  if (e.key === 'Escape') { closeBig(); }
+  else if (e.key === 'ArrowLeft') { bigMove(-1); }
+  else if (e.key === 'ArrowRight') { bigMove(1); }
+  else if (e.key === '+' || e.key === '=') { bigScale(1.25); }
+  else if (e.key === '-') { bigScale(0.8); }
+  else if (e.key === 'Tab') { var f = Array.prototype.filter.call(bigEl().querySelectorAll('button'), function (x) { return !x.disabled; }); if (!f.length) return; var i = f.indexOf(document.activeElement); if (e.shiftKey && i <= 0) { f[f.length - 1].focus(); e.preventDefault(); } else if (!e.shiftKey && i === f.length - 1) { f[0].focus(); e.preventDefault(); } }
+});
 
 /* ---------- eventos ---------- */
 document.addEventListener('click', function (e) {
@@ -808,6 +872,13 @@ document.addEventListener('click', function (e) {
   else if (a === 'prev') { S.page = Math.max(0, S.page - 1); render(); }
   else if (a === 'next') { S.page += 1; render(); }
   else if (a === 'pos') { S.pos = arg; render(); }
+  else if (a === 'big') { openBig(); }
+  else if (a === 'bigclose') { closeBig(); }
+  else if (a === 'bigprev') { bigMove(-1); }
+  else if (a === 'bignext') { bigMove(1); }
+  else if (a === 'bigin') { bigScale(1.25); }
+  else if (a === 'bigout') { bigScale(0.8); }
+  else if (a === 'bigfit') { paintBig(true); }
   else if (a === 'gen') { generate(); }
   else if (a === 'dl') { downloadOne(+arg); }
   else if (a === 'zip') { downloadZip(); }
