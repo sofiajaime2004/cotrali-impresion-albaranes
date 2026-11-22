@@ -106,6 +106,7 @@ var S = { code: '', cc: '', apiErr: '', apiFail: 0, manual: {}, entries: [], ste
 var downloadsCap = null;
 var inkCache = new Map();
 var pvToken = 0;
+function eyeSvg(on) { return '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/>' + (on ? '<path d="M3 3l18 18"/>' : '') + '</svg>'; }
 
 /* ---------- lectura de PDF ---------- */
 async function addPdf(file) {
@@ -660,7 +661,7 @@ function step1() {
   var api = !!apiUrl(), hasCc = !!cleanCc(S.cc);
   h += '<div class="card" style="margin-top:20px;padding:24px;display:flex;flex-direction:column;gap:12px"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px"><h2 style="margin:0;font-size:20px">3. Código de cliente</h2><span style="font-size:14px;font-weight:600" class="' + (hasCc ? 'ok-t' : 'bad-t') + '">' + (hasCc ? 'Listo' : 'Obligatorio') + '</span></div><p style="margin:0;font-size:15px;color:#3b4957">Se imprime en la etiqueta, debajo del código de barras y a la izquierda del Nº de albarán.</p><label style="display:flex;flex-direction:column;gap:4px;font-weight:600;max-width:360px">Código de cliente (ej.: 00929)<input type="text" autocomplete="off" maxlength="14" data-input="cc" value="' + esc(S.cc) + '" style="min-height:44px;border:2px solid #7f93a5;border-radius:6px;padding:0 10px"></label></div>';
   h += '<div class="card" style="margin-top:20px;padding:24px;display:flex;flex-direction:column;gap:12px"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px"><h2 style="margin:0;font-size:20px">4. Servicio de lectura de hojas</h2><span style="font-size:14px;font-weight:600" class="' + (api ? (S.code ? 'ok-t' : 'bad-t') : 'bad-t') + '">' + (api ? (S.code ? 'Listo' : 'Obligatorio') : 'No configurado') + '</span></div>';
-  if (api) h += '<p style="margin:0;font-size:15px;color:#3b4957">Cada hoja se envía al servicio de lectura (OCR) para identificar bien los números, aunque el PDF sea una foto. Las imágenes no se guardan.</p><label style="display:flex;flex-direction:column;gap:4px;font-weight:600;max-width:360px">Código de acceso del equipo<input type="password" autocomplete="off" data-input="code" value="' + esc(S.code) + '" style="min-height:44px;border:2px solid #7f93a5;border-radius:6px;padding:0 10px"></label>';
+  if (api) h += '<p style="margin:0;font-size:15px;color:#3b4957">Cada hoja se envía al servicio de lectura (OCR) para identificar bien los números, aunque el PDF sea una foto. Las imágenes no se guardan.</p><label style="display:flex;flex-direction:column;gap:4px;font-weight:600;max-width:360px">Código de acceso del equipo<span style="position:relative;display:block"><input type="' + (S.showCode ? 'text' : 'password') + '" autocomplete="off" data-input="code" value="' + esc(S.code) + '" style="min-height:44px;width:100%;box-sizing:border-box;border:2px solid #7f93a5;border-radius:6px;padding:0 48px 0 10px"><button type="button" id="eyebtn" data-act="eye" aria-pressed="' + (!!S.showCode) + '" aria-label="' + (S.showCode ? 'Ocultar el código' : 'Mostrar el código') + '" title="' + (S.showCode ? 'Ocultar el código' : 'Mostrar el código') + '" style="position:absolute;right:2px;top:2px;width:44px;height:40px;border:0;background:transparent;cursor:pointer;color:#0069a6;display:flex;align-items:center;justify-content:center">' + eyeSvg(!!S.showCode) + '</button></span></label>';
   else h += '<p style="margin:0;font-size:15px" class="bad-t"><strong>El servicio de lectura no está configurado</strong> (falta la dirección en <code>config.js</code>). Se usará solo el texto del PDF y los códigos de barras impresos, y las hojas escaneadas pueden quedar sin identificar.</p>';
   h += '</div>';
   var miss = []; if (!hasPdf) miss.push('los PDF de albaranes'); if (!hasXls) miss.push('el Excel'); if (!hasCc) miss.push('el código de cliente'); if (api && !S.code) miss.push('el código de acceso');
@@ -872,6 +873,7 @@ document.addEventListener('click', function (e) {
   else if (a === 'prev') { S.page = Math.max(0, S.page - 1); render(); }
   else if (a === 'next') { S.page += 1; render(); }
   else if (a === 'pos') { S.pos = arg; render(); }
+  else if (a === 'eye') { S.showCode = !S.showCode; var ci = $('[data-input=code]'); if (ci) ci.type = S.showCode ? 'text' : 'password'; b.innerHTML = eyeSvg(S.showCode); b.setAttribute('aria-pressed', String(S.showCode)); b.setAttribute('aria-label', S.showCode ? 'Ocultar el código' : 'Mostrar el código'); b.title = b.getAttribute('aria-label'); if (ci) ci.focus(); }
   else if (a === 'big') { openBig(); }
   else if (a === 'bigclose') { closeBig(); }
   else if (a === 'bigprev') { bigMove(-1); }
