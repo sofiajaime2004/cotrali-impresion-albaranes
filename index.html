@@ -168,7 +168,8 @@ async function apiOcr(pdf, pageNo) {
   var data = cv.toDataURL('image/jpeg', 0.85).split(',')[1];
   for (var attempt = 0; attempt < 2; attempt++) {
     try {
-      var r = await fetch(apiUrl(), { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Access-Code': S.code }, body: JSON.stringify({ image: data }) });
+      var ac = new AbortController(), tm = setTimeout(function () { ac.abort(); }, 40000), r;
+      try { r = await fetch(apiUrl(), { method: 'POST', signal: ac.signal, headers: { 'Content-Type': 'application/json', 'X-Access-Code': S.code }, body: JSON.stringify({ image: data }) }); } finally { clearTimeout(tm); }
       if (r.status === 401 || r.status === 403) throw { fatal: 'El código de acceso no es correcto o esta página no está autorizada.' };
       if (r.status === 429) throw { fatal: 'Se ha superado el límite de uso del servicio de lectura. Espera un poco e inténtalo de nuevo.' };
       if (!r.ok) throw { retry: true };
@@ -193,6 +194,7 @@ async function ocrAll(onProgress) {
     }
   }
   S.apiFail = 0;
+  await onProgress('Leyendo las hojas con el servicio de lectura', 0, total);
   await Promise.all([worker(), worker(), worker(), worker()]);
   if (fatal) throw new Error(fatal);
 }
